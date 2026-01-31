@@ -404,8 +404,11 @@ static int cfg_parse_acme_kws(char **args, int section_type, struct proxy *curpx
 			goto out;
 		}
 	} else if (strcmp(args[0], "challenge") == 0) {
-		if ((!*args[1]) ||  (strcasecmp("http-01", args[1]) != 0 && (strcasecmp("dns-01", args[1]) != 0))) {
-			ha_alert("parsing [%s:%d]: keyword '%s' in '%s' section requires a challenge type: http-01 or dns-01\n", file, linenum, args[0], cursection);
+		if ((!*args[1]) ||
+		    ((strcasecmp("http-01", args[1]) != 0) &&
+		     (strcasecmp("dns-01", args[1]) != 0) &&
+		     (strcasecmp("dns-persist-01", args[1]) != 0))) {
+			ha_alert("parsing [%s:%d]: keyword '%s' in '%s' must be one of the following: http-01, dns-01, dns-persist-01\n", file, linenum, args[0], cursection);
 			err_code |= ERR_ALERT | ERR_FATAL;
 			goto out;
 		}
@@ -1597,6 +1600,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 	struct buffer *t1 = NULL, *t2 = NULL;
 	int ret = 1;
 	int i;
+	int wildcard = -1;
 
 	hc = ctx->hc;
 	if (!hc)
@@ -1650,6 +1654,9 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 	}
 	t2->data = ret;
 
+	/* optional property */
+	mjson_get_bool(hc->res.buf.area, hc->res.buf.data, "$.wildcard", &wildcard);
+
 	auth->dns = istdup(ist2(t2->area, t2->data));
 
 	ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.status", trash.area, trash.size);
@@ -1702,20 +1709,68 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			goto error;
 		}
 
-		ret = mjson_get_string(tokptr, toklen, "$.token", trash.area, trash.size);
-		if (ret == -1) {
-			memprintf(errmsg, "couldn't get a token in challenges[%d] from Authorization URL \"%s\"", i, auth->auth.ptr);
-			goto error;
-		}
-		trash.data = ret;
-		auth->token = istdup(ist2(trash.area, trash.data));
-		if (!isttest(auth->token)) {
-			memprintf(errmsg, "out of memory");
-			goto error;
+		if (strcasecmp(ctx->cfg->challenge, "dns-persist-01") != 0) {
+			ret = mjson_get_string(tokptr, toklen, "$.token", trash.area, trash.size);
+			if (ret == -1) {
+				memprintf(errmsg, "couldn't get a token in challenges[%d] from Authorization URL \"%s\"", i, auth->auth.ptr);
+				goto error;
+			}
+			trash.data = ret;
+			auth->token = istdup(ist2(trash.area, trash.data));
+			if (!isttest(auth->token)) {
+				memprintf(errmsg, "out of memory");
+				goto error;
+			}
 		}
 
-		/* compute a response for the TXT entry */
-		if (strcasecmp(ctx->cfg->challenge, "dns-01") == 0) {
+		if (strcasecmp(ctx->cfg->challenge, "dns-persist-01") == 0) {
+			/* Clients MUST consider a challenge malformed if the issuer-domain-names array is empty
+			   or if it contains more than 10 entries, and MUST reject such challenges.
+			   https://datatracker.ietf.org/doc/html/draft-ietf-acme-dns-persist#section-3.1-2.4.4
+			*/
+
+			struct buffer *record_values = NULL;
+			int n = 0;
+
+			record_values = get_trash_chunk();
+
+			for (n = 0; ; n++) {
+				int ret;
+				char dom_all[] = "$.issuer-domain-names[XXX]";
+
+				if (snprintf(dom_all, sizeof(dom_all), "$.issuer-domain-names[%d]", n) >= sizeof(dom_all))
+					goto error;
+
+				/* break the loop at the end of the list */
+				if (mjson_find(tokptr, toklen, dom_all, NULL, NULL) == MJSON_TOK_INVALID)
+					break;
+
+				if (n >= 10) {
+					memprintf(errmsg, "more then 10 entries in acme issuer-domain-names");
+					goto error;
+				}
+
+				ret = mjson_get_string(tokptr, toklen, dom_all, trash.area, trash.size);
+				if (ret == -1) {
+					memprintf(errmsg, "issuer-domain-names contains values other than strings");
+					goto error;
+				}
+				trash.data = ret;
+
+				/* collect allowed domain names for better reporting */
+				chunk_appendf(record_values, "%s\"%.*s; accounturi=%.*s%s\"", n == 0 ?  "" : " OR ",
+				    (int)trash.data, trash.area, (int)ctx->kid.len, ctx->kid.ptr, wildcard == 1 ? "; policy=wildcard" : "");
+			}
+
+			if (n == 0) {
+				memprintf(errmsg, "0 entries in acme issuer-domain-names");
+				goto error;
+			}
+
+			send_log(NULL, LOG_INFO, "acme: %s: dns-persist-01 requires to set the \"_validation-persist.%.*s\" TXT record to %.*s\n",
+			    ctx->store->path, (int)auth->dns.len, auth->dns.ptr, (int)record_values->data, record_values->area);
+		}
+		else if (strcasecmp(ctx->cfg->challenge, "dns-01") == 0) {
 			struct sink *dpapi;
 			struct ist line[16];
 			int nmsg = 0;
@@ -1723,6 +1778,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 
 			dns_record = get_trash_chunk();
 
+			/* compute a response for the TXT entry */
 			if (acme_txt_record(ist(ctx->cfg->account.thumbprint), auth->token, dns_record) == 0) {
 				memprintf(errmsg, "couldn't compute the dns-01 challenge");
 				goto error;
@@ -1760,12 +1816,18 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			dpapi = sink_find("dpapi");
 			if (dpapi)
 				sink_write(dpapi, LOG_HEADER_NONE, 0, line, nmsg);
-		} else {
+		}
+		else if (strcasecmp(ctx->cfg->challenge, "http-01") == 0) {
 			/* only useful for http-01 */
 			if (acme_add_challenge_map(ctx->cfg->map, auth->token.ptr, ctx->cfg->account.thumbprint, errmsg) != 0) {
 				memprintf(errmsg, "couldn't add the token to the '%s' map: %s", ctx->cfg->map, *errmsg);
 				goto error;
 			}
+		}
+		else {
+			/* defensive programming */
+			memprintf(errmsg, "impossible acme challenge: %s", ctx->cfg->challenge);
+			goto error;
 		}
 
 		/* we only need one challenge, and iteration is only used to found the right one */
