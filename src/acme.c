@@ -1179,9 +1179,9 @@ int acme_res_certificate(struct task *task, struct acme_ctx *ctx, char **errmsg)
 	if (!hc)
 		goto error;
 
-        if ((t1 = alloc_trash_chunk()) == NULL)
+	if ((t1 = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((t2 = alloc_trash_chunk()) == NULL)
+	if ((t2 = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	hdrs = hc->res.hdrs;
@@ -1252,9 +1252,9 @@ int acme_res_chkorder(struct task *task, struct acme_ctx *ctx, char **errmsg)
 	if (!hc)
 		goto error;
 
-        if ((t1 = alloc_trash_chunk()) == NULL)
+	if ((t1 = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((t2 = alloc_trash_chunk()) == NULL)
+	if ((t2 = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	hdrs = hc->res.hdrs;
@@ -1333,11 +1333,11 @@ int acme_req_finalize(struct task *task, struct acme_ctx *ctx, char **errmsg)
 	size_t len = 0;
 	unsigned char *data = NULL;
 
-        if ((csr = alloc_trash_chunk()) == NULL)
+	if ((csr = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((req_in = alloc_trash_chunk()) == NULL)
+	if ((req_in = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((req_out = alloc_trash_chunk()) == NULL)
+	if ((req_out = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	len = i2d_X509_REQ(req, &data);
@@ -1383,9 +1383,9 @@ int acme_res_finalize(struct task *task, struct acme_ctx *ctx, char **errmsg)
 	if (!hc)
 		goto error;
 
-        if ((t1 = alloc_trash_chunk()) == NULL)
+	if ((t1 = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((t2 = alloc_trash_chunk()) == NULL)
+	if ((t2 = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	hdrs = hc->res.hdrs;
@@ -1440,9 +1440,9 @@ int acme_req_challenge(struct task *task, struct acme_ctx *ctx, struct acme_auth
 	};
 	int ret = 1;
 
-        if ((req_in = alloc_trash_chunk()) == NULL)
+	if ((req_in = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((req_out = alloc_trash_chunk()) == NULL)
+	if ((req_out = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	chunk_printf(req_in, "{}");
@@ -1481,9 +1481,9 @@ enum acme_ret acme_res_challenge(struct task *task, struct acme_ctx *ctx, struct
 	if (!hc)
 		goto out;
 
-        if ((t1 = alloc_trash_chunk()) == NULL)
+	if ((t1 = alloc_trash_chunk()) == NULL)
 		goto out;
-        if ((t2 = alloc_trash_chunk()) == NULL)
+	if ((t2 = alloc_trash_chunk()) == NULL)
 		goto out;
 
 	hdrs = hc->res.hdrs;
@@ -1558,9 +1558,9 @@ int acme_post_as_get(struct task *task, struct acme_ctx *ctx, struct ist url, ch
 	};
 	int ret = 1;
 
-        if ((req_in = alloc_trash_chunk()) == NULL)
+	if ((req_in = alloc_trash_chunk()) == NULL)
 		goto error_alloc;
-        if ((req_out = alloc_trash_chunk()) == NULL)
+	if ((req_out = alloc_trash_chunk()) == NULL)
 		goto error_alloc;
 
 	TRACE_USER("POST-as-GET    ", ACME_EV_REQ, ctx, &url);
@@ -1607,9 +1607,9 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 	if (!hc)
 		goto error;
 
-        if ((t1 = alloc_trash_chunk()) == NULL)
+	if ((t1 = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((t2 = alloc_trash_chunk()) == NULL)
+	if ((t2 = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	hdrs = hc->res.hdrs;
@@ -1721,7 +1721,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			}
 
 			send_log(NULL, LOG_NOTICE,"acme: %s: dns-01 requires to set the \"_acme-challenge.%.*s\" TXT record to \"%.*s\" and use the \"acme challenge_ready %s domain %.*s\" command over the CLI\n",
-			                                             ctx->store->path, (int)auth->dns.len, auth->dns.ptr, (int)dns_record->data, dns_record->area, ctx->store->path, (int)auth->dns.len, auth->dns.ptr);
+			    ctx->store->path, (int)auth->dns.len, auth->dns.ptr, (int)dns_record->data, dns_record->area, ctx->store->path, (int)auth->dns.len, auth->dns.ptr);
 
 			/* dump to the "dpapi" sink */
 			line[nmsg++] = ist("acme deploy ");
@@ -1788,9 +1788,9 @@ int acme_req_neworder(struct task *task, struct acme_ctx *ctx, char **errmsg)
 	int ret = 1;
 	char **san = ctx->store->conf.acme.domains;
 
-        if ((req_in = alloc_trash_chunk()) == NULL)
+	if ((req_in = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((req_out = alloc_trash_chunk()) == NULL)
+	if ((req_out = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	chunk_printf(req_in, "{ \"identifiers\": [ ");
@@ -1838,9 +1838,9 @@ int acme_res_neworder(struct task *task, struct acme_ctx *ctx, char **errmsg)
 	if (!hc)
 		goto error;
 
-        if ((t1 = alloc_trash_chunk()) == NULL)
+	if ((t1 = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((t2 = alloc_trash_chunk()) == NULL)
+	if ((t2 = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	hdrs = hc->res.hdrs;
@@ -1904,9 +1904,9 @@ int acme_res_neworder(struct task *task, struct acme_ctx *ctx, char **errmsg)
 			goto error;
 		}
 
-                /* if the challenge is not dns-01, consider that the challenge
-                 * is ready because computed by HAProxy */
-                if (strcasecmp(ctx->cfg->challenge, "dns-01") != 0)
+		/* if the challenge is not dns-01, consider that the challenge
+		 * is ready because computed by HAProxy */
+		if (strcasecmp(ctx->cfg->challenge, "dns-01") != 0)
 			auth->ready = 1;
 
 		auth->next = ctx->auths;
@@ -1959,9 +1959,9 @@ int acme_req_account(struct task *task, struct acme_ctx *ctx, int newaccount, ch
 		"}\n";
 	int ret = 1;
 
-        if ((req_in = alloc_trash_chunk()) == NULL)
+	if ((req_in = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((req_out = alloc_trash_chunk()) == NULL)
+	if ((req_out = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	if (newaccount)
@@ -1998,9 +1998,9 @@ int acme_res_account(struct task *task, struct acme_ctx *ctx, int newaccount, ch
 	if (!hc)
 		goto error;
 
-        if ((t1 = alloc_trash_chunk()) == NULL)
+	if ((t1 = alloc_trash_chunk()) == NULL)
 		goto error;
-        if ((t2 = alloc_trash_chunk()) == NULL)
+	if ((t2 = alloc_trash_chunk()) == NULL)
 		goto error;
 
 	hdrs = hc->res.hdrs;
