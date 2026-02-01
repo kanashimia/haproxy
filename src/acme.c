@@ -1742,14 +1742,12 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			for (n = 0; ; n++) {
 				int ret;
 				char dom_all[] = "$.issuer-domain-names[XXX]";
-				const char *dom_tok_ptr;
-				int dom_tok_len;
 
 				if (snprintf(dom_all, sizeof(dom_all), "$.issuer-domain-names[%d]", n) >= sizeof(dom_all))
 					goto error;
 
 				/* break the loop at the end of the list */
-				if (mjson_find(tokptr, toklen, dom_all, &dom_tok_ptr, &dom_tok_len) == MJSON_TOK_INVALID)
+				if (mjson_find(tokptr, toklen, dom_all, NULL, NULL) == MJSON_TOK_INVALID)
 					break;
 
 				if (n >= 10) {
