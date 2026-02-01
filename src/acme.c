@@ -1723,7 +1723,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 
 			struct buffer *record_values = NULL;
 			int n = 0; /* remember that we are inside of another loop */
-			bool already_validated = false;
+			int already_validated = 0;
 
 			record_values = get_trash_chunk();
 
@@ -1735,7 +1735,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			trash.data = ret;
 
 			if (strncasecmp("valid", trash.area, trash.data) == 0) {
-				already_validated = true;
+				already_validated = 1;
 			}
 
 			/* collect allowed domain names for better reporting */
