@@ -1738,7 +1738,6 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				already_validated = 1;
 			}
 
-			/* collect allowed domain names for better reporting */
 			for (n = 0; ; n++) {
 				int ret;
 				char dom_all[] = "$.issuer-domain-names[XXX]";
@@ -1766,10 +1765,8 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				}
 				trash.data = ret;
 
-				/* with Just-In-Time validation we can stop printing useless logs:
-				   https://datatracker.ietf.org/doc/html/draft-ietf-acme-dns-persist#section-4.2
-				 */
 				if (!already_validated) {
+					/* collect allowed domain names for better reporting */
 					chunk_appendf(record_values, "%s\"%.*s; accounturi=%.*s%s\"", n == 0 ?  "" : " OR ",
 					    (int)trash.data, trash.area, (int)ctx->kid.len, ctx->kid.ptr, wildcard == 1 ? "; policy=wildcard" : "");
 				}
@@ -1780,6 +1777,9 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				goto error;
 			}
 
+			/* with Just-In-Time validation we can stop printing useless logs:
+			   https://datatracker.ietf.org/doc/html/draft-ietf-acme-dns-persist#section-4.2
+			 */
 			if (!already_validated) {
 				send_log(NULL, LOG_INFO, "acme: %s: dns-persist-01 requires to set the \"_validation-persist.%.*s\" TXT record to %.*s\n",
 				    ctx->store->path, (int)auth->dns.len, auth->dns.ptr, (int)record_values->data, record_values->area);
