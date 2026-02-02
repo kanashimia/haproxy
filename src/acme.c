@@ -1604,8 +1604,11 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 	struct http_hdr *hdrs, *hdr;
 	struct buffer *t1 = NULL, *t2 = NULL;
 	int ret = 1;
-	int i;
+	int i = -1;
 	int wildcard = -1;
+	int off, voff, vlen;
+	const char *challenges_ptr;
+	int challenges_len;
 
 	hc = ctx->hc;
 	if (!hc)
@@ -1664,19 +1667,15 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 
 	auth->dns = istdup(ist2(t2->area, t2->data));
 
+	if (mjson_find(hc->res.buf.area, hc->res.buf.data, "$.challenges", &challenges_ptr, &challenges_len) != MJSON_TOK_ARRAY) {
+		goto error;
+	}
+
 	/* get the multiple challenges and select the one from the configuration */
-	for (i = 0; ; i++) {
+	for (off = 0; (off = mjson_next(challenges_ptr, challenges_len, off, &i, NULL, &voff, &vlen, NULL)) != 0; ) {
 		int ret;
-		char chall[] = "$.challenges[XXX]";
-		const char *tokptr;
-		int toklen;
-
-		if (snprintf(chall, sizeof(chall), "$.challenges[%d]", i) >= sizeof(chall))
-			goto error;
-
-		/* break the loop at the end of the challenges objects list */
-		if (mjson_find(hc->res.buf.area, hc->res.buf.data, chall, &tokptr, &toklen) == MJSON_TOK_INVALID)
-			break;
+		const char *tokptr = challenges_ptr + voff;
+		int toklen = vlen;
 
 		ret = mjson_get_string(tokptr, toklen, "$.type", trash.area, trash.size);
 		if (ret == -1) {
@@ -1722,8 +1721,11 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			*/
 
 			struct buffer *record_values = NULL;
-			int n = 0; /* remember that we are inside of another loop */
+			int n = -1; /* remember that we are inside of another loop */
 			int already_validated = 0;
+			int off, voff, vlen;
+			const char *issuers_ptr;
+			int issuers_len;
 
 			record_values = get_trash_chunk();
 
@@ -1738,27 +1740,19 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				already_validated = 1;
 			}
 
-			for (n = 0; ; n++) {
+			if (mjson_find(tokptr, toklen, "$.issuer-domain-names", &issuers_ptr, &issuers_len) != MJSON_TOK_ARRAY) {
+				goto error;
+			}
+
+			for (off = 0; (off = mjson_next(issuers_ptr, issuers_len, off, &n, NULL, &voff, &vlen, NULL)) != 0; ) {
 				int ret;
-				char dom_all[] = "$.issuer-domain-names[XXX]";
-
-				if (snprintf(dom_all, sizeof(dom_all), "$.issuer-domain-names[%d]", n) >= sizeof(dom_all))
-					goto error;
-
-				/* break the loop at the end of the list */
-				if (mjson_find(tokptr, toklen, dom_all, NULL, NULL) == MJSON_TOK_INVALID)
-					break;
 
 				if (n >= 10) {
 					memprintf(errmsg, "more then 10 entries in acme issuer-domain-names");
 					goto error;
 				}
 
-				/* this calls mjson_find again internally which is extra work, pretty sad.
-				   we need to know whether if is the end of the list here, maybe should make
-				   mjson_get_string2 as regular function doesn't provide that information?
-				   or maybe there is a better way to write that? but honestly who cares */
-				ret = mjson_get_string(tokptr, toklen, dom_all, trash.area, trash.size);
+				ret = mjson_get_string(issuers_ptr + voff, vlen, "$", trash.area, trash.size);
 				if (ret == -1) {
 					memprintf(errmsg, "issuer-domain-names contains values other than strings");
 					goto error;
@@ -1772,7 +1766,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				}
 			}
 
-			if (n == 0) {
+			if (n == -1) {
 				memprintf(errmsg, "0 entries in acme issuer-domain-names");
 				goto error;
 			}
