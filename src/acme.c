@@ -1722,7 +1722,6 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 
 			struct buffer *record_values = NULL;
 			int n = -1; /* remember that we are inside of another loop */
-			int already_validated = 0;
 			int off, voff, vlen;
 			const char *issuers_ptr;
 			int issuers_len;
@@ -1737,7 +1736,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			trash.data = ret;
 
 			if (strncasecmp("valid", trash.area, trash.data) == 0) {
-				already_validated = 1;
+				auth->validated = 1;
 			}
 
 			if (mjson_find(tokptr, toklen, "$.issuer-domain-names", &issuers_ptr, &issuers_len) != MJSON_TOK_ARRAY) {
@@ -1759,7 +1758,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				}
 				trash.data = ret;
 
-				if (!already_validated) {
+				if (!auth->validated) {
 					/* collect allowed domain names for better reporting */
 					chunk_appendf(record_values, "%s\"%.*s; accounturi=%.*s%s\"", n == 0 ?  "" : " OR ",
 					    (int)trash.data, trash.area, (int)ctx->kid.len, ctx->kid.ptr, wildcard == 1 ? "; policy=wildcard" : "");
@@ -1774,7 +1773,7 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			/* with Just-In-Time validation we can stop printing useless logs:
 			   https://datatracker.ietf.org/doc/html/draft-ietf-acme-dns-persist#section-4.2
 			 */
-			if (!already_validated) {
+			if (!auth->validated) {
 				send_log(NULL, LOG_INFO, "acme: %s: dns-persist-01 requires to set the \"_validation-persist.%.*s\" TXT record to %.*s\n",
 				    ctx->store->path, (int)auth->dns.len, auth->dns.ptr, (int)record_values->data, record_values->area);
 			}
@@ -2345,6 +2344,14 @@ re:
 		break;
 		case ACME_CHALLENGE:
 			if (http_st == ACME_HTTP_REQ) {
+				/* if challenge is already validated we skip this stage */
+				if (ctx->next_auth->validated) {
+					if ((ctx->next_auth = ctx->next_auth->next) == NULL) {
+						st = ACME_CHKCHALLENGE;
+						ctx->next_auth = ctx->auths;
+					}
+					goto nextreq;
+				}
 
 				/* if the challenge is not ready, wait to be wakeup */
 				if (!ctx->next_auth->ready)
@@ -2374,6 +2381,14 @@ re:
 		break;
 		case ACME_CHKCHALLENGE:
 			if (http_st == ACME_HTTP_REQ) {
+				/* if challenge is already validated we skip this stage */
+				if (ctx->next_auth->validated) {
+					if ((ctx->next_auth = ctx->next_auth->next) == NULL)
+						st = ACME_FINALIZE;
+
+					goto nextreq;
+				}
+
 				if (acme_post_as_get(task, ctx, ctx->next_auth->chall, &errmsg) != 0)
 					goto retry;
 			}
