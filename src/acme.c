@@ -1671,6 +1671,19 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 		goto error;
 	}
 
+	ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.status", trash.area, trash.size);
+	if (ret == -1) {
+		memprintf(errmsg, "couldn't get a \"status\" from Authorization URL \"%s\"", auth->auth.ptr);
+		goto error;
+	}
+	trash.data = ret;
+
+	/* if auth is already valid we need to skip solving challenges */
+	if (strncasecmp("valid", trash.area, trash.data) == 0) {
+		auth->validated = 1;
+		goto out;
+	}
+
 	/* get the multiple challenges and select the one from the configuration */
 	for (off = 0; (off = mjson_next(challenges_ptr, challenges_len, off, &i, NULL, &voff, &vlen, NULL)) != 0; ) {
 		int ret;
@@ -1728,17 +1741,6 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 
 			record_values = get_trash_chunk();
 
-			ret = mjson_get_string(tokptr, toklen, "$.status", trash.area, trash.size);
-			if (ret == -1) {
-				memprintf(errmsg, "couldn't get a status in challenges[%d] from Authorization URL \"%s\"", i, auth->auth.ptr);
-				goto error;
-			}
-			trash.data = ret;
-
-			if (strncasecmp("valid", trash.area, trash.data) == 0) {
-				auth->validated = 1;
-			}
-
 			if (mjson_find(tokptr, toklen, "$.issuer-domain-names", &issuers_ptr, &issuers_len) != MJSON_TOK_ARRAY) {
 				goto error;
 			}
@@ -1758,11 +1760,9 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				}
 				trash.data = ret;
 
-				if (!auth->validated) {
-					/* collect allowed domain names for better reporting */
-					chunk_appendf(record_values, "%s\"%.*s; accounturi=%.*s%s\"", n == 0 ?  "" : " OR ",
-					    (int)trash.data, trash.area, (int)ctx->kid.len, ctx->kid.ptr, wildcard == 1 ? "; policy=wildcard" : "");
-				}
+				/* collect allowed domain names for better reporting */
+				chunk_appendf(record_values, "%s\"%.*s; accounturi=%.*s%s\"", n == 0 ?  "" : " OR ",
+				    (int)trash.data, trash.area, (int)ctx->kid.len, ctx->kid.ptr, wildcard == 1 ? "; policy=wildcard" : "");
 			}
 
 			if (n == -1) {
@@ -1770,13 +1770,8 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				goto error;
 			}
 
-			/* with Just-In-Time validation we can stop printing useless logs:
-			   https://datatracker.ietf.org/doc/html/draft-ietf-acme-dns-persist#section-4.2
-			 */
-			if (!auth->validated) {
-				send_log(NULL, LOG_INFO, "acme: %s: dns-persist-01 requires to set the \"_validation-persist.%.*s\" TXT record to %.*s\n",
-				    ctx->store->path, (int)auth->dns.len, auth->dns.ptr, (int)record_values->data, record_values->area);
-			}
+			send_log(NULL, LOG_INFO, "acme: %s: dns-persist-01 requires to set the \"_validation-persist.%.*s\" TXT record to %.*s\n",
+			    ctx->store->path, (int)auth->dns.len, auth->dns.ptr, (int)record_values->data, record_values->area);
 		}
 		else if (strcasecmp(ctx->cfg->challenge, "dns-01") == 0) {
 			struct sink *dpapi;
