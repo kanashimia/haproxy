@@ -455,6 +455,22 @@ static int cfg_parse_acme_kws(char **args, int section_type, struct proxy *curpx
 			ha_alert("parsing [%s:%d]: keyword '%s' in '%s' section requires either the 'on' or 'off' parameter\n", file, linenum, args[0], cursection);
 			goto out;
 		}
+	} else if (strcmp(args[0], "profile") == 0) {
+		if (!*args[1]) {
+			ha_alert("parsing [%s:%d]: keyword '%s' in '%s' section requires an argument\n", file, linenum, args[0], cursection);
+			err_code |= ERR_ALERT | ERR_FATAL;
+			goto out;
+		}
+		if (alertif_too_many_args(1, file, linenum, args, &err_code))
+			goto out;
+
+		ha_free(&cur_acme->profile);
+		cur_acme->profile = strdup(args[1]);
+		if (!cur_acme->profile) {
+			err_code |= ERR_ALERT | ERR_FATAL;
+			ha_alert("parsing [%s:%d]: out of memory.\n", file, linenum);
+			goto out;
+		}
 	} else if (*args[0] != 0) {
 		ha_alert("parsing [%s:%d]: unknown keyword '%s' in '%s' section\n", file, linenum, args[0], cursection);
 		err_code |= ERR_ALERT | ERR_FATAL;
@@ -821,6 +837,7 @@ void deinit_acme()
 		EVP_PKEY_free(acme_cfgs->account.pkey);
 		ha_free(&acme_cfgs->vars);
 		ha_free(&acme_cfgs->provider);
+		ha_free(&acme_cfgs->profile);
 		ha_free(&acme_cfgs->challenge);
 		ha_free(&acme_cfgs->map);
 
@@ -843,6 +860,7 @@ static struct cfg_kw_list cfg_kws_acme = {ILH, {
 	{ CFG_ACME, "reuse-key",  cfg_parse_acme_kws },
 	{ CFG_ACME, "acme-vars",  cfg_parse_acme_vars_provider },
 	{ CFG_ACME, "provider-name",  cfg_parse_acme_vars_provider },
+	{ CFG_ACME, "profile",  cfg_parse_acme_kws },
 	{ CFG_GLOBAL, "acme.scheduler", cfg_parse_global_acme_sched },
 	{ 0, NULL, NULL },
 }};
@@ -1798,7 +1816,14 @@ int acme_req_neworder(struct task *task, struct acme_ctx *ctx, char **errmsg)
 		chunk_appendf(req_in, "%s{ \"type\": \"dns\",  \"value\": \"%s\" }", (*san == *ctx->store->conf.acme.domains) ?  "" : ",", *san);
 	}
 
-	chunk_appendf(req_in, " ] }");
+	chunk_appendf(req_in, " ]");
+
+	if (ctx->cfg->profile != NULL) {
+		/* TODO: don't ignore json encoding here */
+		chunk_appendf(req_in, ", \"profile\": \"%s\"", ctx->cfg->profile);
+	}
+
+	chunk_appendf(req_in, " }");
 
 	TRACE_DATA("NewOrder Decode", ACME_EV_REQ, ctx, &ctx->resources.newOrder, req_in);
 
@@ -2092,6 +2117,7 @@ int acme_directory(struct task *task, struct acme_ctx *ctx, char **errmsg)
 {
 	struct httpclient *hc;
 	int ret = 0;
+	char profile[256];
 
 	hc = ctx->hc;
 
@@ -2132,6 +2158,24 @@ int acme_directory(struct task *task, struct acme_ctx *ctx, char **errmsg)
 	if (!isttest(ctx->resources.newOrder)) {
 		memprintf(errmsg, "couldn't get newOrder URL from the directory URL");
 		goto error;
+	}
+
+	if (ctx->cfg->profile != NULL) {
+		if (mjson_find(hc->res.buf.area, hc->res.buf.data, "$.meta.profiles", NULL, NULL) == MJSON_TOK_INVALID) {
+			memprintf(errmsg, "certificate profile requested but CA doesn't support profiles");
+			goto error;
+		}
+
+		/* TODO: this is just bad and awful and wrong */
+		if (snprintf(profile, sizeof(profile), "$.meta.profiles.%s", ctx->cfg->profile) >= sizeof(profile))
+			goto error;
+
+		/* TODO: provide better error repoting here */
+		if ((ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, profile, trash.area, trash.size)) <= 0) {
+			memprintf(errmsg, "couldn't get requested profile from the directory URL");
+			ctx->retries = 0;
+			goto error;
+		}
 	}
 
 	httpclient_destroy(hc);
