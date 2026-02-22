@@ -54,4 +54,21 @@ int mjson_get_bool(const char *s, int len, const char *path, int *v);
 int mjson_get_string(const char *s, int len, const char *path, char *to, int n);
 int mjson_get_hex(const char *s, int len, const char *path, char *to, int n);
 
+struct mjson_iter {
+  const char *area;
+  int size;
+  int offset;
+  int array_index;
+  int key_offset;
+  int key_len;
+  int val_offset;
+  int val_len;
+  enum mjson_tok val_type;
+  const char *val_ptr;
+};
+
+struct mjson_iter mjson_iter_init(const char *area, int size);
+enum mjson_tok mjson_iter_init_find(const char *area, int size, const char *jp, struct mjson_iter *it);
+int mjson_iter_next(struct mjson_iter *it);
+
 #endif  // MJSON_H

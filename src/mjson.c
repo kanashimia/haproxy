@@ -430,3 +430,121 @@ done:
 }
 
 
+struct nextdata {
+  int off, len, depth, t, vo, arrayindex;
+  int *koff, *klen, *voff, *vlen, *vtype;
+};
+
+static int next_cb(int tok, const char *s, int off, int len, void *ud) {
+  struct nextdata *d = (struct nextdata *) ud;
+  // int i;
+  switch (tok) {
+    case '{':
+    case '[':
+      if (d->depth == 0 && tok == '[') d->arrayindex = 0;
+      if (d->depth == 1 && off > d->off) {
+        d->vo = off;
+        d->t = tok == '{' ? MJSON_TOK_OBJECT : MJSON_TOK_ARRAY;
+        if (d->voff) *d->voff = off;
+        if (d->vtype) *d->vtype = d->t;
+      }
+      d->depth++;
+      break;
+    case '}':
+    case ']':
+      d->depth--;
+      if (d->depth == 1 && d->vo) {
+        d->len = off + len;
+        if (d->vlen) *d->vlen = d->len - d->vo;
+        if (d->arrayindex >= 0) {
+          if (d->koff) *d->koff = d->arrayindex;  // koff holds array index
+          if (d->klen) *d->klen = 0;              // klen holds 0
+        }
+        return 1;
+      }
+      if (d->depth == 1 && d->arrayindex >= 0) d->arrayindex++;
+      break;
+    case ',':
+    case ':':
+      break;
+    case MJSON_TOK_KEY:
+      if (d->depth == 1 && d->off < off) {
+        if (d->koff) *d->koff = off;  // And report back to the user
+        if (d->klen) *d->klen = len;  // If we have to
+      }
+      break;
+    default:
+      if (d->depth != 1) break;
+      // If we're iterating over the array
+      if (off > d->off) {
+        d->len = off + len;
+        if (d->vlen) *d->vlen = len;    // value length
+        if (d->voff) *d->voff = off;    // value offset
+        if (d->vtype) *d->vtype = tok;  // value type
+        if (d->arrayindex >= 0) {
+          if (d->koff) *d->koff = d->arrayindex;  // koff holds array index
+          if (d->klen) *d->klen = 0;              // klen holds 0
+        }
+        return 1;
+      }
+      if (d->arrayindex >= 0) d->arrayindex++;
+      break;
+  }
+  (void) s;
+  return 0;
+}
+
+// int mjson_next(const char *s, int n, int off, int *koff, int *klen, int *voff,
+//                int *vlen, int *vtype) {
+//   struct nextdata d = {off, 0, 0, 0, 0, -1, koff, klen, voff, vlen, vtype};
+//   mjson(s, n, next_cb, &d);
+//   return d.len;
+// }
+
+struct mjson_iter mjson_iter_init(const char *area, int size) {
+  struct mjson_iter it = {
+    .area = area,
+    .size = size,
+    .array_index = -1,
+    .offset = 0,
+    .key_offset = 0,
+    .key_len = 0,
+    .val_offset = 0,
+    .val_len = 0,
+    .val_type = 0,
+    .val_ptr = NULL
+  };
+  return it;
+}
+
+int mjson_iter_next(struct mjson_iter *it) {
+  struct nextdata d = {it->offset, 0, 0, 0, 0, -1, &it->key_offset, &it->key_len, &it->val_offset, &it->val_len, (int*)&it->val_type};
+  mjson(it->area, it->size, next_cb, &d);
+  it->array_index = d.arrayindex;
+  it->val_ptr = it->area + it->val_offset;
+  return d.len;
+}
+
+enum mjson_tok mjson_iter_init_find(const char *area, int size, const char *jp, struct mjson_iter *it) {
+  const char *p;
+  int tok, n;
+  tok = mjson_find(area, size, jp, &p, &n);
+  *it = mjson_iter_init(p, n);
+  return tok;
+}
+
+/*int mjson_iter_init_find(const char *area, int size, const char *jp, enum mjson_tok tok, struct mjson_iter *it) {
+  const char *p;
+  int n;
+
+  if (tok != MJSON_TOK_ARRAY || tok != MJSON_TOK_OBJECT) return -1;
+  if (mjson_find(area, size, jp, &p, &n) != tok) return -1;
+
+  *it = mjson_iter_init(p, n);
+
+  return 0;
+}*/
+
+// struct mjson_iter it = mjson_iterator_init(challenges_ptr, challenges_len);
+// while((it->offset = mjson_iter_next(it)) != 0) {
+// }

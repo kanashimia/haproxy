@@ -1748,27 +1748,24 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 			*/
 
 			struct buffer *record_values = NULL;
-			int n = 0;
+			struct mjson_iter it;
 
 			record_values = get_trash_chunk();
 
-			for (n = 0; ; n++) {
+			if (mjson_iter_init_find(tokptr, toklen, "$.issuer-domain-names", &it) != MJSON_TOK_ARRAY) {
+				memprintf(errmsg, "couldn't get issuer-domain-names");
+				goto error;
+			}
+
+			while ((it.offset = mjson_iter_next(&it)) != 0) {
 				int ret;
-				char dom_all[] = "$.issuer-domain-names[XXX]";
 
-				if (snprintf(dom_all, sizeof(dom_all), "$.issuer-domain-names[%d]", n) >= sizeof(dom_all))
-					goto error;
-
-				/* break the loop at the end of the list */
-				if (mjson_find(tokptr, toklen, dom_all, NULL, NULL) == MJSON_TOK_INVALID)
-					break;
-
-				if (n >= 10) {
+				if (it.array_index >= 10) {
 					memprintf(errmsg, "more then 10 entries in acme issuer-domain-names");
 					goto error;
 				}
 
-				ret = mjson_get_string(tokptr, toklen, dom_all, trash.area, trash.size);
+				ret = mjson_get_string(it.val_ptr, it.val_len, "$", trash.area, trash.size);
 				if (ret == -1) {
 					memprintf(errmsg, "issuer-domain-names contains values other than strings");
 					goto error;
@@ -1776,11 +1773,11 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 				trash.data = ret;
 
 				/* collect allowed domain names for better reporting */
-				chunk_appendf(record_values, "%s\"%.*s; accounturi=%.*s%s\"", n == 0 ?  "" : " OR ",
+				chunk_appendf(record_values, "%s\"%.*s; accounturi=%.*s%s\"", it.array_index == 0 ?  "" : " OR ",
 				    (int)trash.data, trash.area, (int)ctx->kid.len, ctx->kid.ptr, wildcard == 1 ? "; policy=wildcard" : "");
 			}
 
-			if (n == 0) {
+			if (it.array_index == 0) {
 				memprintf(errmsg, "0 entries in acme issuer-domain-names");
 				goto error;
 			}
@@ -2648,7 +2645,8 @@ end:
 	HA_SPIN_UNLOCK(CKCH_LOCK, &ckch_lock);
 	/* call the task again in 12h */
 	/* XXX: need to be configured */
-	task->expire = tick_add(now_ms, 12 * 60 * 60 * 1000);
+	// task->expire = tick_add(now_ms, 12 * 60 * 60 * 1000);
+	task->expire = tick_add(now_ms, 10 * 1000);
 	return task;
 }
 
