@@ -31,6 +31,8 @@
 #include <haproxy/tools.h>
 #include <haproxy/trace.h>
 
+#define ACME_RETRY 100
+
 #define TRACE_SOURCE &trace_acme
 
 #if defined(HAVE_ACME)
@@ -2447,8 +2449,8 @@ retry:
 			ctx->retryafter = 0;
 		} else {
 			/* else does an exponential backoff * 3 */
-			for (i = 0; i < ACME_RETRY - ctx->retries; i++)
-				delay *= 3;
+			// for (i = 0; i < ACME_RETRY - ctx->retries; i++)
+				// delay *= 3;
 		}
 		send_log(NULL, LOG_NOTICE, "acme: %s: %s, retrying in %ds (%d/%d retries)...\n", ctx->store->path, errmsg ? errmsg : "", delay, ACME_RETRY - ctx->retries, ACME_RETRY);
 		task->expire = tick_add(now_ms, delay * 1000);
