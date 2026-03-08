@@ -1465,13 +1465,12 @@ out:
 }
 
 /* parse the challenge URL response */
-enum acme_ret acme_res_challenge(struct task *task, struct acme_ctx *ctx, struct acme_auth *auth, int chk, char **errmsg)
+int acme_res_challenge(struct task *task, struct acme_ctx *ctx, struct acme_auth *auth, char **errmsg)
 {
 	struct httpclient *hc;
 	struct http_hdr *hdrs, *hdr;
 	struct buffer *t1 = NULL, *t2 = NULL;
-	enum acme_ret ret = ACME_RET_FAIL;
-	int res = 0;
+	int res = 1;
 
 	hc = ctx->hc;
 	if (!hc)
@@ -1497,30 +1496,6 @@ enum acme_ret acme_res_challenge(struct task *task, struct acme_ctx *ctx, struct
 		}
 	}
 
-	res = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.status", trash.area, trash.size);
-	if (res == -1) {
-		memprintf(errmsg, "waiting for the status");
-		ret = ACME_RET_RETRY;
-		goto out;
-	}
-	trash.data = res;
-
-	if (strncasecmp("pending", trash.area, trash.data) == 0 || strncasecmp("processing", trash.area, trash.data) == 0) {
-		if (chk) { /* during challenge chk */
-			memprintf(errmsg, "challenge status: %.*s", (int)trash.data, trash.area);
-			ret = ACME_RET_RETRY;
-			goto out;
-		} else {  /* during object creation */
-			ret = ACME_RET_OK;
-			goto out;
-		}
-	}
-
-	if (strncasecmp("valid", trash.area, trash.data) == 0) {
-		ret = ACME_RET_OK;
-		goto out;
-	}
-
 	if (hc->res.status < 200 || hc->res.status >= 300 || mjson_find(hc->res.buf.area, hc->res.buf.data, "$.error", NULL, NULL) == MJSON_TOK_OBJECT) {
 		/* XXX: need a generic URN error parser */
 		if ((res = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.error.detail", t1->area, t1->size)) > -1)
@@ -1534,13 +1509,29 @@ enum acme_ret acme_res_challenge(struct task *task, struct acme_ctx *ctx, struct
 		goto out;
 	}
 
+	res = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.status", trash.area, trash.size);
+	if (res == -1) {
+		memprintf(errmsg, "couldn't get \"status\" from challenge response");
+		goto out;
+	}
+	trash.data = res;
+
+	if ( strncasecmp("pending", trash.area, trash.data) == 0
+	  || strncasecmp("processing", trash.area, trash.data) == 0
+	  || strncasecmp("valid", trash.area, trash.data) == 0) {
+		res = 0;
+		goto out;
+	}
+
+	memprintf(errmsg, "unhandled challenge status \"%.*s\" (HTTP status code %d)", (int)trash.data, trash.area, hc->res.status);
+
 out:
 	free_trash_chunk(t1);
 	free_trash_chunk(t2);
 	httpclient_destroy(hc);
 	ctx->hc = NULL;
 
-	return ret;
+	return res;
 }
 
 /* generate a POST-as-GET request */
@@ -2338,13 +2329,9 @@ re:
 					goto retry;
 			}
 			if (http_st == ACME_HTTP_RES) {
-				enum acme_ret ret = acme_res_challenge(task, ctx, ctx->next_auth, 0, &errmsg);
-
-				if (ret == ACME_RET_RETRY) {
+				if (acme_res_challenge(task, ctx, ctx->next_auth, &errmsg) != 0)
 					goto retry;
-				} else if (ret == ACME_RET_FAIL) {
-					goto abort;
-				}
+
 				if ((ctx->next_auth = ctx->next_auth->next) == NULL) {
 					st = ACME_CHKCHALLENGE;
 					ctx->next_auth = ctx->auths;
