@@ -150,7 +150,8 @@ static struct proxy *httpclient_acme_px = NULL;
 enum acme_ret {
 	ACME_RET_OK = 0,
 	ACME_RET_RETRY = 1,
-	ACME_RET_FAIL = 2
+	ACME_RET_FAIL = 2,
+	ACME_RET_SKIP = 3
 };
 
 static int acme_start_task(struct ckch_store *store, char **errmsg);
@@ -1592,13 +1593,15 @@ end:
 	return ret;
 }
 
-int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *auth, char **errmsg)
+enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *auth, int during_polling, char **errmsg)
 {
 	struct httpclient *hc;
 	struct http_hdr *hdrs, *hdr;
 	struct buffer *t1 = NULL, *t2 = NULL;
 	int ret = 1;
 	int i;
+	enum acme_ret res = ACME_RET_RETRY;
+	int invalid = 0;
 
 	hc = ctx->hc;
 	if (!hc)
@@ -1637,6 +1640,30 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 		goto error;
 	}
 
+	ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.status", trash.area, trash.size);
+	if (ret == -1) {
+		memprintf(errmsg, "couldn't get \"status\" from Authorization URL \"%s\"", auth->auth.ptr);
+		goto error;
+	}
+	trash.data = ret;
+
+	if (strncasecmp("valid", trash.area, trash.data) == 0) {
+		res = ACME_RET_SKIP;
+		goto error;
+	}
+
+	if (during_polling) {
+		if (strncasecmp("pending", trash.area, trash.data) == 0) {
+			memprintf(errmsg, "challenge status: %.*s", (int)trash.data, trash.area);
+			res = ACME_RET_RETRY;
+			goto error;
+		} else {
+			/* will need to collect an error from the challenges array,
+			 * so don't fail immediately, but still mark as invalid */
+			invalid = 1;
+		}
+	}
+
 	/* check and save the DNS entry */
 	ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.identifier.type", t1->area, t1->size);
 	if (ret == -1) {
@@ -1660,6 +1687,8 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 		char chall[] = "$.challenges[XXX]";
 		const char *tokptr;
 		int toklen;
+		const char *errptr;
+		int errlen;
 
 		if (snprintf(chall, sizeof(chall), "$.challenges[%d]", i) >= sizeof(chall))
 			goto error;
@@ -1667,6 +1696,28 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 		/* break the loop at the end of the challenges objects list */
 		if (mjson_find(hc->res.buf.area, hc->res.buf.data, chall, &tokptr, &toklen) == MJSON_TOK_INVALID)
 			break;
+
+		/* returns first error found */
+		if (mjson_find(tokptr, toklen, "$.error", &errptr, &errlen) == MJSON_TOK_OBJECT) {
+			double status = 0;
+			t1->data = t2->data = 0;
+			if ((ret = mjson_get_string(errptr, errlen, "$.detail", t1->area, t1->size)) > -1)
+				t1->data = ret;
+			if ((ret = mjson_get_string(errptr, errlen, "$.type", t2->area, t2->size)) > -1)
+				t2->data = ret;
+			if ((ret = mjson_get_number(errptr, errlen, "$.status", &status)) != 1)
+				status = hc->res.status;
+			if (t2->data != 0 && t1->data != 0) {
+				memprintf(errmsg, "challenge error: \"%.*s\" (%.*s) (HTTP status code %d)", (int)t1->data, t1->area, (int)t2->data, t2->area, (int)status);
+			} else {
+				memprintf(errmsg, "challenge error: unknown (HTTP status code %d)", (int)status);
+			}
+			res = ACME_RET_FAIL;
+			goto error;
+		}
+
+		if (invalid)
+		  continue;
 
 		ret = mjson_get_string(tokptr, toklen, "$.type", trash.area, trash.size);
 		if (ret == -1) {
@@ -1758,10 +1809,18 @@ int acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme_auth *aut
 		}
 
 		/* we only need one challenge, and iteration is only used to found the right one */
-		break;
+		res = ACME_RET_OK;
+		goto error;
 	}
 
-	ret = 0;
+	if (invalid) {
+		memprintf(errmsg, "challenge error: unknown, was marked as invalid but no error description was provided");
+		res = ACME_RET_FAIL;
+		goto error;
+	}
+
+	memprintf(errmsg, "selected challenge isn't supported by the CA");
+	res = ACME_RET_FAIL;
 
 error:
 	free_trash_chunk(t1);
@@ -1769,7 +1828,7 @@ error:
 	httpclient_destroy(hc);
 	ctx->hc = NULL;
 
-	return ret;
+	return res;
 }
 
 
@@ -2250,11 +2309,18 @@ re:
 					goto retry;
 			}
 			if (http_st == ACME_HTTP_RES) {
-				if (acme_res_auth(task, ctx, ctx->next_auth, &errmsg) != 0) {
+				enum acme_ret ret = acme_res_auth(task, ctx, ctx->next_auth, 0, &errmsg);
+				if (ret == ACME_RET_RETRY) {
 					goto retry;
+				} else if (ret == ACME_RET_FAIL) {
+					goto abort;
 				}
 				if ((ctx->next_auth = ctx->next_auth->next) == NULL) {
-					st = ACME_CHALLENGE;
+					if (ret == ACME_RET_SKIP) {
+						st = ACME_FINALIZE;
+					} else {
+						st = ACME_CHALLENGE;
+					}
 					ctx->next_auth = ctx->auths;
 				}
 				/* call with next auth or do the challenge step */
@@ -2277,7 +2343,7 @@ re:
 				if (ret == ACME_RET_RETRY) {
 					goto retry;
 				} else if (ret == ACME_RET_FAIL) {
-					goto end;
+					goto abort;
 				}
 				if ((ctx->next_auth = ctx->next_auth->next) == NULL) {
 					st = ACME_CHKCHALLENGE;
@@ -2292,19 +2358,19 @@ re:
 		break;
 		case ACME_CHKCHALLENGE:
 			if (http_st == ACME_HTTP_REQ) {
-				if (acme_post_as_get(task, ctx, ctx->next_auth->chall, &errmsg) != 0)
+				if (acme_post_as_get(task, ctx, ctx->next_auth->auth, &errmsg) != 0)
 					goto retry;
 			}
 			if (http_st == ACME_HTTP_RES) {
-				enum acme_ret ret = acme_res_challenge(task, ctx, ctx->next_auth, 1, &errmsg);
+				enum acme_ret ret = acme_res_auth(task, ctx, ctx->next_auth, 1, &errmsg);
 				if (ret == ACME_RET_RETRY) {
 					goto retry;
 				} else if (ret == ACME_RET_FAIL) {
 					goto abort;
 				}
-				if ((ctx->next_auth = ctx->next_auth->next) == NULL)
+				if ((ctx->next_auth = ctx->next_auth->next) == NULL) {
 					st = ACME_FINALIZE;
-
+				}
 				/* do it with the next auth or finalize */
 				goto nextreq;
 			}
