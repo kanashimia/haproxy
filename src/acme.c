@@ -1605,12 +1605,12 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 
 	hc = ctx->hc;
 	if (!hc)
-		goto error;
+		goto end;
 
         if ((t1 = alloc_trash_chunk()) == NULL)
-		goto error;
+		goto end;
         if ((t2 = alloc_trash_chunk()) == NULL)
-		goto error;
+		goto end;
 
 	hdrs = hc->res.hdrs;
 
@@ -1637,26 +1637,26 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 			memprintf(errmsg, "invalid HTTP status code %d when getting Authorization URL: \"%.*s\" (%.*s)", hc->res.status, (int)t1->data, t1->area, (int)t2->data, t2->area);
 		else
 			memprintf(errmsg, "invalid HTTP status code %d when getting Authorization URL", hc->res.status);
-		goto error;
+		goto end;
 	}
 
 	ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.status", trash.area, trash.size);
 	if (ret == -1) {
 		memprintf(errmsg, "couldn't get \"status\" from Authorization URL \"%s\"", auth->auth.ptr);
-		goto error;
+		goto end;
 	}
 	trash.data = ret;
 
 	if (strncasecmp("valid", trash.area, trash.data) == 0) {
 		res = ACME_RET_SKIP;
-		goto error;
+		goto end;
 	}
 
 	if (during_polling) {
 		if (strncasecmp("pending", trash.area, trash.data) == 0) {
 			memprintf(errmsg, "challenge status: %.*s", (int)trash.data, trash.area);
 			res = ACME_RET_RETRY;
-			goto error;
+			goto end;
 		} else {
 			/* will need to collect an error from the challenges array,
 			 * so don't fail immediately, but still mark as invalid */
@@ -1668,14 +1668,14 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 	ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.identifier.type", t1->area, t1->size);
 	if (ret == -1) {
 		memprintf(errmsg, "couldn't get a type \"dns\" from Authorization URL \"%s\"", auth->auth.ptr);
-		goto error;
+		goto end;
 	}
 	t1->data = ret;
 
 	ret = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.identifier.value", t2->area, t2->size);
 	if (ret == -1) {
 		memprintf(errmsg, "couldn't get a type \"dns\" from Authorization URL \"%s\"", auth->auth.ptr);
-		goto error;
+		goto end;
 	}
 	t2->data = ret;
 
@@ -1691,7 +1691,7 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 		int errlen;
 
 		if (snprintf(chall, sizeof(chall), "$.challenges[%d]", i) >= sizeof(chall))
-			goto error;
+			goto end;
 
 		/* break the loop at the end of the challenges objects list */
 		if (mjson_find(hc->res.buf.area, hc->res.buf.data, chall, &tokptr, &toklen) == MJSON_TOK_INVALID)
@@ -1713,7 +1713,7 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 				memprintf(errmsg, "challenge error: unknown (HTTP status code %d)", (int)status);
 			}
 			res = ACME_RET_FAIL;
-			goto error;
+			goto end;
 		}
 
 		if (invalid)
@@ -1722,7 +1722,7 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 		ret = mjson_get_string(tokptr, toklen, "$.type", trash.area, trash.size);
 		if (ret == -1) {
 			memprintf(errmsg, "couldn't get a challenge type in challenges[%d] from Authorization URL \"%s\"", i, auth->auth.ptr);
-			goto error;
+			goto end;
 		}
 		trash.data = ret;
 
@@ -1733,25 +1733,25 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 		ret = mjson_get_string(tokptr, toklen, "$.url", trash.area, trash.size);
 		if (ret == -1) {
 			memprintf(errmsg, "couldn't get a challenge URL in challenges[%d] from Authorization URL \"%s\"", i, auth->auth.ptr);
-			goto error;
+			goto end;
 		}
 		trash.data = ret;
 		auth->chall = istdup(ist2(trash.area, trash.data));
 		if (!isttest(auth->chall)) {
 			memprintf(errmsg, "out of memory");
-			goto error;
+			goto end;
 		}
 
 		ret = mjson_get_string(tokptr, toklen, "$.token", trash.area, trash.size);
 		if (ret == -1) {
 			memprintf(errmsg, "couldn't get a token in challenges[%d] from Authorization URL \"%s\"", i, auth->auth.ptr);
-			goto error;
+			goto end;
 		}
 		trash.data = ret;
 		auth->token = istdup(ist2(trash.area, trash.data));
 		if (!isttest(auth->token)) {
 			memprintf(errmsg, "out of memory");
-			goto error;
+			goto end;
 		}
 
 		/* compute a response for the TXT entry */
@@ -1765,7 +1765,7 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 
 			if (acme_txt_record(ist(ctx->cfg->account.thumbprint), auth->token, dns_record) == 0) {
 				memprintf(errmsg, "couldn't compute the dns-01 challenge");
-				goto error;
+				goto end;
 			}
 
 			send_log(NULL, LOG_NOTICE,"acme: %s: dns-01 requires to set the \"_acme-challenge.%.*s\" TXT record to \"%.*s\" and use the \"acme challenge_ready %s domain %.*s\" command over the CLI\n",
@@ -1804,25 +1804,25 @@ enum acme_ret acme_res_auth(struct task *task, struct acme_ctx *ctx, struct acme
 			/* only useful for http-01 */
 			if (acme_add_challenge_map(ctx->cfg->map, auth->token.ptr, ctx->cfg->account.thumbprint, errmsg) != 0) {
 				memprintf(errmsg, "couldn't add the token to the '%s' map: %s", ctx->cfg->map, *errmsg);
-				goto error;
+				goto end;
 			}
 		}
 
 		/* we only need one challenge, and iteration is only used to found the right one */
 		res = ACME_RET_OK;
-		goto error;
+		goto end;
 	}
 
 	if (invalid) {
 		memprintf(errmsg, "challenge error: unknown, was marked as invalid but no error description was provided");
 		res = ACME_RET_FAIL;
-		goto error;
+		goto end;
 	}
 
 	memprintf(errmsg, "selected challenge isn't supported by the CA");
 	res = ACME_RET_FAIL;
 
-error:
+end:
 	free_trash_chunk(t1);
 	free_trash_chunk(t2);
 	httpclient_destroy(hc);
