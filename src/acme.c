@@ -1498,9 +1498,9 @@ int acme_res_challenge(struct task *task, struct acme_ctx *ctx, struct acme_auth
 
 	if (hc->res.status < 200 || hc->res.status >= 300 || mjson_find(hc->res.buf.area, hc->res.buf.data, "$.error", NULL, NULL) == MJSON_TOK_OBJECT) {
 		/* XXX: need a generic URN error parser */
-		if ((res = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.error.detail", t1->area, t1->size)) > -1)
+		if ((res = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.detail", t1->area, t1->size)) > -1)
 			t1->data = res;
-		if ((res = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.error.type", t2->area, t2->size)) > -1)
+		if ((res = mjson_get_string(hc->res.buf.area, hc->res.buf.data, "$.type", t2->area, t2->size)) > -1)
 			t2->data = res;
 		if (t2->data && t1->data)
 			memprintf(errmsg, "challenge error: \"%.*s\" (%.*s) (HTTP status code %d)", (int)t1->data, t1->area, (int)t2->data, t2->area, hc->res.status);
